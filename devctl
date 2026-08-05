@@ -1,0 +1,253 @@
+#!/usr/bin/env sh
+set -eu
+
+script_path="$0"
+while [ -L "${script_path}" ]; do
+  script_dir="$(CDPATH= cd -- "$(dirname -- "${script_path}")" && pwd)"
+  link_target="$(readlink "${script_path}")"
+  case "${link_target}" in
+    /*) script_path="${link_target}" ;;
+    *) script_path="${script_dir}/${link_target}" ;;
+  esac
+done
+
+repo_dir="$(CDPATH= cd -- "$(dirname -- "${script_path}")" && pwd)"
+caller_dir="$(pwd -P)"
+workspace_root="$(dirname "${repo_dir}")"
+export DEVCTL_WORKSPACE_ROOT="${DEVCTL_WORKSPACE_ROOT:-${workspace_root}}"
+
+case "${caller_dir}" in
+  "${DEVCTL_WORKSPACE_ROOT}"/* | "${DEVCTL_WORKSPACE_ROOT}")
+    container_workdir="${caller_dir}"
+    ;;
+  *)
+    container_workdir="${repo_dir}"
+    ;;
+esac
+
+release_main() {
+  version="${1:-}"
+  if [ -z "${version}" ]; then
+    echo "Usage: devctl release X.Y.Z|major|minor|patch" >&2
+    exit 2
+  fi
+
+  bump=""
+  case "${version}" in
+    major | minor | patch)
+      bump="${version}"
+      ;;
+    *)
+      tag="v${version#v}"
+      if ! printf '%s\n' "${tag}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+        echo "Version must be X.Y.Z, major, minor, or patch, got: ${version}" >&2
+        exit 2
+      fi
+      ;;
+  esac
+
+  cd "${caller_dir}"
+  git rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "Not a git repository: ${caller_dir}" >&2
+    exit 2
+  }
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "Working tree is dirty; commit or stash first." >&2
+    exit 2
+  fi
+  git fetch origin --tags
+
+  if [ -n "${bump}" ]; then
+    latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n1)"
+    latest="${latest:-0.0.0}"
+    major_ver="${latest%%.*}"
+    rest="${latest#*.}"
+    minor_ver="${rest%%.*}"
+    patch_ver="${rest#*.}"
+    case "${bump}" in
+      major)
+        major_ver=$((major_ver + 1))
+        minor_ver=0
+        patch_ver=0
+        ;;
+      minor)
+        minor_ver=$((minor_ver + 1))
+        patch_ver=0
+        ;;
+      patch)
+        patch_ver=$((patch_ver + 1))
+        ;;
+    esac
+    tag="v${major_ver}.${minor_ver}.${patch_ver}"
+  fi
+
+  if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+    echo "Tag ${tag} already exists." >&2
+    exit 2
+  fi
+  if ! git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
+    echo "No upstream tracking branch for HEAD; push and set upstream first." >&2
+    exit 2
+  fi
+  if [ "$(git rev-parse HEAD)" != "$(git rev-parse '@{u}')" ]; then
+    echo "HEAD differs from upstream; push or pull first." >&2
+    exit 2
+  fi
+  git tag -a "${tag}" -m "${tag}"
+  git push origin "${tag}"
+  echo "Pushed ${tag}. CI will run checks and publish the release."
+}
+
+if [ "${1:-}" = "release" ]; then
+  shift
+  release_main "$@"
+  exit 0
+fi
+
+cd "${repo_dir}"
+
+run_name="devctl-cli-$$"
+
+cleanup() {
+  docker rm -f "${run_name}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT HUP INT TERM
+
+reap_orphans() {
+  for name in $(docker ps --filter "name=devctl-cli-" --format '{{.Names}}'); do
+    pid="${name#devctl-cli-}"
+    case "${pid}" in '' | *[!0-9]*) continue ;; esac
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      docker rm -f "${name}" >/dev/null 2>&1 || true
+    fi
+  done
+}
+reap_orphans
+
+exec 3<&0
+
+run_in_container() {
+  docker compose -f .docker/docker-compose.yml run --rm \
+    --name "${run_name}" \
+    --workdir "${container_workdir}" \
+    "$@" <&3 &
+  wait $!
+}
+
+run_devctl() {
+  run_in_container devctl "$@"
+}
+
+make_main() {
+  if [ "${container_workdir}" != "${caller_dir}" ]; then
+    echo "devctl make must run from inside the workspace (${DEVCTL_WORKSPACE_ROOT})." >&2
+    exit 2
+  fi
+  if [ ! -f "${caller_dir}/Makefile" ]; then
+    echo "No Makefile in ${caller_dir}." >&2
+    exit 2
+  fi
+
+  if [ "$#" -eq 0 ]; then
+    raw="$(run_in_container --entrypoint make devctl -qp)" && rc=0 || rc=$?
+    if [ "${rc}" -eq 2 ]; then
+      printf '%s\n' "${raw}" >&2
+      exit "${rc}"
+    fi
+    printf '%s\n' "${raw}" \
+      | awk -F: '
+          /^# Not a target:$/ { skip = 1; next }
+          /^[A-Za-z0-9][^ \t=:$#\/]*:([^=]|$)/ {
+            if (!skip) { print $1 }
+            skip = 0
+            next
+          }
+          { skip = 0 }
+        ' \
+      | grep -v -e '^Makefile$' \
+      | sort -u
+    return 0
+  fi
+
+  plan="$(run_in_container --entrypoint make devctl -n "$@")"
+
+  project_env="$(run_devctl env 2>/dev/null)" || project_env=""
+  if [ -n "${project_env}" ]; then
+    eval "${project_env}"
+  fi
+
+  cd "${caller_dir}"
+  executed=0
+  group=""
+  group_head=""
+  while IFS= read -r line <&4; do
+    if [ -z "${group}" ]; then
+      group_head="${line}"
+    fi
+    case "${line}" in
+      *\\)
+        stripped="${line%\\}"
+        if [ -z "${group}" ]; then
+          group="${stripped}"
+        else
+          group="${group}
+${stripped}"
+        fi
+        continue
+        ;;
+    esac
+    if [ -z "${group}" ]; then
+      group="${line}"
+    else
+      group="${group}
+${line}"
+    fi
+
+    case "${group_head}" in
+      "" | "make:"* | "make["*"]:"*)
+        group=""
+        group_head=""
+        continue
+        ;;
+      "make "*)
+        group=""
+        group_head=""
+        continue
+        ;;
+    esac
+
+    executed=1
+    printf '%s\n' "${group}"
+    sh -c "${group}" || exit $?
+    group=""
+    group_head=""
+  done 4<<DEVCTL_MAKE_PLAN
+${plan}
+DEVCTL_MAKE_PLAN
+  if [ "${executed}" -eq 0 ]; then
+    echo "Nothing to do."
+  fi
+}
+
+case "${1:-}" in
+  open)
+    output="$(run_devctl "$@")"
+    printf '%s\n' "${output}"
+    case "${output}" in
+      http://* | https://*)
+        if [ "$(uname)" = "Darwin" ]; then
+          open "${output}"
+        elif command -v xdg-open >/dev/null 2>&1; then
+          xdg-open "${output}" >/dev/null 2>&1 &
+        fi
+        ;;
+    esac
+    ;;
+  make)
+    shift
+    make_main "$@"
+    ;;
+  *)
+    run_devctl "$@"
+    ;;
+esac

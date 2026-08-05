@@ -1,0 +1,15 @@
+{
+  "name": "example-web",
+  "adapter": "docker-compose",
+  "compose_file": "docker-compose.yml",
+  "http_port_env": "PORT_HTTP",
+  "preferred_ports": [5173],
+  "host_prefixed_port_envs": ["PORT_HTTP"],
+  "env": {
+    "PROJECT_NAME": "devctl_example_web"
+  },
+  "build": true,
+  "health_timeout_seconds": 90,
+  "health_check_path": "/",
+  "health_check_statuses": [200]
+}

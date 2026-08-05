@@ -1,0 +1,17 @@
+{
+  "name": "example-backend",
+  "adapter": "docker-compose",
+  "compose_file": "docker-compose.yml",
+  "env_file": ".env",
+  "http_port_env": "PORT_HTTP",
+  "extra_port_envs": ["PORT_DB", "PORT_REDIS"],
+  "preferred_ports": [8080, 5432, 6379],
+  "host_prefixed_port_envs": ["PORT_HTTP"],
+  "env": {
+    "PROJECT_NAME": "devctl_example_backend"
+  },
+  "build": true,
+  "health_timeout_seconds": 120,
+  "health_check_path": "/health",
+  "health_check_statuses": [200, 204]
+}

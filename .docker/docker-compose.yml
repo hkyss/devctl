@@ -1,0 +1,42 @@
+name: devctl
+
+services:
+  devctl:
+    build:
+      context: ..
+      dockerfile: .docker/Dockerfile
+      args:
+        DEVCTL_VERSION: ${DEVCTL_VERSION:-0.0.0-dev}
+    environment:
+      USER: ${USER:-developer}
+      DEVCTL_STATE_DIR: /state
+      DEVCTL_REPO_ROOT: ${DEVCTL_WORKSPACE_ROOT:?Set DEVCTL_WORKSPACE_ROOT to the absolute host workspace path}/devctl
+      PYTHONPATH: ${DEVCTL_WORKSPACE_ROOT:?Set DEVCTL_WORKSPACE_ROOT to the absolute host workspace path}/devctl/src
+      DEVCTL_DNS_SUFFIX: localhost
+      DEVCTL_URL_SCHEME: http
+      DEVCTL_UPSTREAM_HOST: host.docker.internal
+      DEVCTL_PUBLISH_HOST: 127.0.0.1
+      DEVCTL_WORKSPACE_ROOT: ${DEVCTL_WORKSPACE_ROOT:?Set DEVCTL_WORKSPACE_ROOT to the absolute host workspace path}
+    volumes:
+      - devctl-state:/state
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DEVCTL_WORKSPACE_ROOT:?Set DEVCTL_WORKSPACE_ROOT to the absolute host workspace path}:${DEVCTL_WORKSPACE_ROOT:?Set DEVCTL_WORKSPACE_ROOT to the absolute host workspace path}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    working_dir: ${DEVCTL_WORKSPACE_ROOT:?Set DEVCTL_WORKSPACE_ROOT to the absolute host workspace path}/devctl
+    profiles:
+      - cli
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:80:80"
+    volumes:
+      - devctl-state:/state:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["caddy", "run", "--watch", "--config", "/state/Caddyfile"]
+
+volumes:
+  devctl-state:

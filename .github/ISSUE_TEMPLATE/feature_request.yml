@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose a command, flag, or profile field
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you doing today, and where does it break down? Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would like devctl to do. Sketch the command line or the profile field if you have one in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: Existing commands, wrapper scripts, or Makefile targets you are using to work around this.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This is for local development, not CI or servers.
+          required: true

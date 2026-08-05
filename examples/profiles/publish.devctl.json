@@ -1,0 +1,21 @@
+{
+  "name": "example-publish",
+  "adapter": "docker-compose",
+  "compose_file": "docker-compose.yml",
+  "http_port_env": "PORT_HTTP",
+  "extra_port_envs": ["PORT_REDIS"],
+  "preferred_ports": [8080, 6379],
+  "host_prefixed_port_envs": ["PORT_HTTP"],
+  "publish_envs": {
+    "REDIS_PUBLISH": {
+      "source": "PORT_REDIS",
+      "target": 6379,
+      "host": "$DEVCTL_PUBLISH_HOST"
+    }
+  },
+  "env": {
+    "PROJECT_NAME": "devctl_example_publish"
+  },
+  "build": true,
+  "health_timeout_seconds": 90
+}

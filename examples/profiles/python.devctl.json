@@ -1,0 +1,16 @@
+{
+  "name": "example-api",
+  "adapter": "docker-compose",
+  "compose_file": "docker-compose.yml",
+  "env_file": ".env",
+  "http_port_env": "PORT_HTTP",
+  "preferred_ports": [8000],
+  "host_prefixed_port_envs": ["PORT_HTTP"],
+  "env": {
+    "PROJECT_NAME": "devctl_example_api"
+  },
+  "build": true,
+  "health_timeout_seconds": 90,
+  "health_check_path": "/health",
+  "health_check_statuses": [200, 204]
+}

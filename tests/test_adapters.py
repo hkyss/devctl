@@ -1,5 +1,6 @@
 import json
 import os
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -165,6 +166,15 @@ class AdapterTests(TempDirTestCase):
             adapter.command_ps_ids(),
         )
 
+    def test_command_ps_ids_can_include_stopped_containers(self) -> None:
+        profile = make_profile(compose_file="compose.yml")
+        adapter = DockerComposeAdapter(self.settings, profile)
+
+        self.assertEqual(
+            ["docker", "compose", "-f", "compose.yml", "ps", "-q", "-a"],
+            adapter.command_ps_ids(all_containers=True),
+        )
+
     @patch("devctl.adapters.subprocess.run")
     def test_container_ids_parses_stdout_lines(self, run_mock) -> None:
         run_mock.return_value.stdout = "abc123\ndef456\n"
@@ -290,3 +300,60 @@ class PublishedPortsTests(TempDirTestCase):
 
         run_mock.return_value = self._result(0, "")
         self.assertEqual(set(), published_ports("devctl_app_alice"))
+
+
+ANONYMOUS_A = "a" * 64
+ANONYMOUS_B = "b" * 64
+
+
+class AdapterAnonymousVolumeTests(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.settings = make_settings(self.tmp_path)
+        self.adapter = DockerComposeAdapter(self.settings, make_profile(compose_file="compose.yml"))
+
+    @patch("devctl.adapters.subprocess.run")
+    def test_only_unnamed_volumes_are_collected(self, run_mock) -> None:
+        run_mock.side_effect = [
+            SimpleNamespace(returncode=0, stdout="c1\nc2\n"),
+            SimpleNamespace(returncode=0, stdout=f"{ANONYMOUS_A}\napp_db\n{ANONYMOUS_B}\napp_db\n"),
+        ]
+
+        self.assertEqual([ANONYMOUS_A, ANONYMOUS_B], self.adapter.anonymous_volumes())
+
+    @patch("devctl.adapters.subprocess.run")
+    def test_no_containers_means_nothing_to_collect(self, run_mock) -> None:
+        run_mock.return_value = SimpleNamespace(returncode=0, stdout="")
+
+        self.assertEqual([], self.adapter.anonymous_volumes())
+        self.assertEqual(1, run_mock.call_count)
+
+    @patch("devctl.adapters.subprocess.run")
+    def test_down_removes_anonymous_volumes_and_spares_named_ones(self, run_mock) -> None:
+        run_mock.side_effect = [
+            SimpleNamespace(returncode=0, stdout="c1\n"),
+            SimpleNamespace(returncode=0, stdout=f"{ANONYMOUS_A}\napp_db\n"),
+            SimpleNamespace(returncode=0, stdout=""),
+            SimpleNamespace(returncode=0, stdout=""),
+        ]
+
+        with patch("sys.stdout", new=StringIO()):
+            self.assertEqual(0, self.adapter.down())
+
+        calls = [call.args[0] for call in run_mock.call_args_list]
+        self.assertIn(["docker", "volume", "rm", ANONYMOUS_A], calls)
+        self.assertNotIn(["docker", "volume", "rm", "app_db"], calls)
+
+    @patch("devctl.adapters.subprocess.run")
+    def test_a_failed_down_removes_nothing(self, run_mock) -> None:
+        run_mock.side_effect = [
+            SimpleNamespace(returncode=0, stdout="c1\n"),
+            SimpleNamespace(returncode=0, stdout=f"{ANONYMOUS_A}\n"),
+            SimpleNamespace(returncode=1, stdout=""),
+        ]
+
+        with patch("sys.stdout", new=StringIO()):
+            self.assertEqual(1, self.adapter.down())
+
+        calls = [call.args[0] for call in run_mock.call_args_list]
+        self.assertNotIn(["docker", "volume", "rm", ANONYMOUS_A], calls)

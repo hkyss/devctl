@@ -47,7 +47,7 @@ class SystemDfVolumeSizesTests(TempDirTestCase):
 class GcDryRunTests(TempDirTestCase):
     @patch("devctl.commands._system_df_volume_sizes", return_value={})
     @patch("devctl.commands._list_dangling_images", return_value=[])
-    @patch("devctl.commands._list_dangling_volumes", return_value=["vol_a", "vol_b"])
+    @patch("devctl.commands._list_orphan_anonymous_volumes", return_value=["vol_a", "vol_b"])
     @patch("devctl.commands.subprocess.run")
     def test_dry_run_prints_and_removes_nothing(self, run_mock, *_mocks) -> None:
         with patch("sys.stdout", new=StringIO()) as out:
@@ -57,7 +57,7 @@ class GcDryRunTests(TempDirTestCase):
         self.assertIn("vol_b", out.getvalue())
 
     @patch("devctl.commands._list_dangling_images", return_value=[])
-    @patch("devctl.commands._list_dangling_volumes", return_value=[])
+    @patch("devctl.commands._list_orphan_anonymous_volumes", return_value=[])
     def test_nothing_to_clean_up(self, *_mocks) -> None:
         with patch("sys.stdout", new=StringIO()) as out:
             gc(dry_run=False, yes=True, volumes=True, images=False)
@@ -66,7 +66,7 @@ class GcDryRunTests(TempDirTestCase):
 
 class GcYesModeTests(TempDirTestCase):
     @patch("devctl.commands._list_dangling_images", return_value=[])
-    @patch("devctl.commands._list_dangling_volumes", return_value=["vol_a", "vol_b"])
+    @patch("devctl.commands._list_orphan_anonymous_volumes", return_value=["vol_a", "vol_b"])
     @patch("devctl.commands.subprocess.run")
     def test_yes_removes_all_without_prompt(self, run_mock, *_mocks) -> None:
         run_mock.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -77,7 +77,7 @@ class GcYesModeTests(TempDirTestCase):
         self.assertIn(["docker", "volume", "rm", "vol_b"], calls)
 
     @patch("devctl.commands._list_dangling_images", return_value=[("img1", "myapp:latest")])
-    @patch("devctl.commands._list_dangling_volumes", return_value=["vol_a"])
+    @patch("devctl.commands._list_orphan_anonymous_volumes", return_value=["vol_a"])
     @patch("devctl.commands.subprocess.run")
     def test_images_only_leaves_volumes_untouched(self, run_mock, *_mocks) -> None:
         run_mock.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -88,7 +88,7 @@ class GcYesModeTests(TempDirTestCase):
         self.assertNotIn(["docker", "volume", "rm", "vol_a"], calls)
 
     @patch("devctl.commands._list_dangling_images", return_value=[])
-    @patch("devctl.commands._list_dangling_volumes", return_value=["vol_a", "vol_b"])
+    @patch("devctl.commands._list_orphan_anonymous_volumes", return_value=["vol_a", "vol_b"])
     @patch("devctl.commands.subprocess.run")
     def test_partial_failure_raises_and_reports(self, run_mock, *_mocks) -> None:
         def side_effect(cmd, **kwargs):
@@ -106,7 +106,7 @@ class GcYesModeTests(TempDirTestCase):
 class GcInteractivePromptTests(TempDirTestCase):
     @patch("devctl.commands._system_df_volume_sizes", return_value={})
     @patch("devctl.commands._list_dangling_images", return_value=[])
-    @patch("devctl.commands._list_dangling_volumes", return_value=["vol_a"])
+    @patch("devctl.commands._list_orphan_anonymous_volumes", return_value=["vol_a"])
     @patch("devctl.commands.subprocess.run")
     @patch("devctl.commands.sys.stdin")
     def test_tty_accept_removes(self, stdin_mock, run_mock, *_mocks) -> None:
@@ -119,7 +119,7 @@ class GcInteractivePromptTests(TempDirTestCase):
 
     @patch("devctl.commands._system_df_volume_sizes", return_value={})
     @patch("devctl.commands._list_dangling_images", return_value=[])
-    @patch("devctl.commands._list_dangling_volumes", return_value=["vol_a"])
+    @patch("devctl.commands._list_orphan_anonymous_volumes", return_value=["vol_a"])
     @patch("devctl.commands.subprocess.run")
     @patch("devctl.commands.sys.stdin")
     def test_tty_decline_removes_nothing(self, stdin_mock, run_mock, *_mocks) -> None:
@@ -131,7 +131,7 @@ class GcInteractivePromptTests(TempDirTestCase):
 
     @patch("devctl.commands._system_df_volume_sizes", return_value={})
     @patch("devctl.commands._list_dangling_images", return_value=[])
-    @patch("devctl.commands._list_dangling_volumes", return_value=["vol_a"])
+    @patch("devctl.commands._list_orphan_anonymous_volumes", return_value=["vol_a"])
     @patch("devctl.commands.subprocess.run")
     @patch("devctl.commands.sys.stdin")
     def test_non_tty_no_yes_behaves_like_dry_run(self, stdin_mock, run_mock, *_mocks) -> None:
@@ -142,7 +142,7 @@ class GcInteractivePromptTests(TempDirTestCase):
 
     @patch("devctl.commands._system_df_volume_sizes", return_value={})
     @patch("devctl.commands._list_dangling_images", return_value=[])
-    @patch("devctl.commands._list_dangling_volumes", return_value=["vol_a"])
+    @patch("devctl.commands._list_orphan_anonymous_volumes", return_value=["vol_a"])
     @patch("devctl.commands.subprocess.run")
     def test_dry_run_wins_even_with_yes(self, run_mock, *_mocks) -> None:
         with patch("sys.stdout", new=StringIO()):

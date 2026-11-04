@@ -737,9 +737,19 @@ def _warn_upstream_publish_mismatch(settings: Settings) -> None:
         )
 
 
-def _list_dangling_volumes() -> list[str]:
+def _list_orphan_anonymous_volumes() -> list[str]:
     result = subprocess.run(
-        ["docker", "volume", "ls", "-f", "dangling=true", "--format", "{{.Name}}"],
+        [
+            "docker",
+            "volume",
+            "ls",
+            "-f",
+            "dangling=true",
+            "-f",
+            "label=com.docker.volume.anonymous",
+            "--format",
+            "{{.Name}}",
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
@@ -803,7 +813,7 @@ def gc(*, dry_run: bool, yes: bool, volumes: bool, images: bool) -> None:
     if not volumes and not images:
         volumes = True
 
-    candidate_volumes = _list_dangling_volumes() if volumes else []
+    candidate_volumes = _list_orphan_anonymous_volumes() if volumes else []
     candidate_images = _list_dangling_images() if images else []
 
     if not candidate_volumes and not candidate_images:
@@ -813,7 +823,7 @@ def gc(*, dry_run: bool, yes: bool, volumes: bool, images: bool) -> None:
     sizes = _system_df_volume_sizes() if candidate_volumes else {}
 
     if candidate_volumes:
-        print(info(f"{len(candidate_volumes)} orphan volume(s):"))
+        print(info(f"{len(candidate_volumes)} orphan anonymous volume(s):"))
         for name in candidate_volumes:
             size = sizes.get(name)
             print(f"  - {name}" + (f" ({size})" if size else ""))
@@ -867,10 +877,10 @@ def gc(*, dry_run: bool, yes: bool, volumes: bool, images: bool) -> None:
 
 
 def _warn_orphan_volumes() -> None:
-    names = _list_dangling_volumes()
+    names = _list_orphan_anonymous_volumes()
     if not names:
         return
-    print(warning(f"note: {len(names)} orphan docker volume(s) not attached to any container:"))
+    print(warning(f"note: {len(names)} anonymous docker volume(s) left behind by a removed container:"))
     for name in names[:10]:
         print(f"  - {name}")
     if len(names) > 10:

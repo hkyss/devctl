@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -8,6 +9,8 @@ from .override import ensure_override_stub, write_override
 from .profiles import ProjectProfile
 from .routing import domain_for, url_for
 from .settings import Settings
+
+ANONYMOUS_VOLUME_NAME = re.compile(r"^[0-9a-f]{64}$")
 
 
 def compose_project_name(profile: ProjectProfile) -> str:
@@ -177,11 +180,28 @@ class DockerComposeAdapter:
         return process.wait()
 
     def down(self) -> int:
-        return subprocess.run(
+        leaked = self.anonymous_volumes()
+        exit_code = subprocess.run(
             self.command_down(),
             cwd=self.profile.path,
             env=self.env(0, [0] * len(self.profile.extra_port_envs)),
         ).returncode
+        if exit_code == 0 and leaked:
+            self._remove_volumes(leaked)
+        return exit_code
+
+    def _remove_volumes(self, names: list[str]) -> None:
+        removed = 0
+        for name in names:
+            result = subprocess.run(
+                ["docker", "volume", "rm", name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if result.returncode == 0:
+                removed += 1
+        if removed:
+            print(f"Removed {removed} anonymous volume(s) left behind by {compose_project_name(self.profile)}")
 
     def command_exec(self, service: str, cmd: list[str], tty: bool) -> list[str]:
         args = ["docker", "compose"]
@@ -224,17 +244,19 @@ class DockerComposeAdapter:
             env=self.env(0, [0] * len(self.profile.extra_port_envs)),
         ).returncode
 
-    def command_ps_ids(self) -> list[str]:
+    def command_ps_ids(self, *, all_containers: bool = False) -> list[str]:
         args = ["docker", "compose"]
         if self.profile.env_file:
             args.extend(["--env-file", self.profile.env_file])
         args.extend(self._compose_file_args())
         args.extend(["ps", "-q"])
+        if all_containers:
+            args.append("-a")
         return args
 
-    def container_ids(self) -> list[str]:
+    def container_ids(self, *, all_containers: bool = False) -> list[str]:
         result = subprocess.run(
-            self.command_ps_ids(),
+            self.command_ps_ids(all_containers=all_containers),
             cwd=self.profile.path,
             env=self.env(0, [0] * len(self.profile.extra_port_envs)),
             stdout=subprocess.PIPE,
@@ -242,6 +264,27 @@ class DockerComposeAdapter:
             text=True,
         )
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    def anonymous_volumes(self) -> list[str]:
+        container_ids = self.container_ids(all_containers=True)
+        if not container_ids:
+            return []
+        result = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Name}}{{end}}{{end}}',
+                *container_ids,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        if result.returncode != 0:
+            return []
+        names = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        return sorted(name for name in names if ANONYMOUS_VOLUME_NAME.fullmatch(name))
 
 
 def adapter_for(settings: Settings, profile: ProjectProfile) -> DockerComposeAdapter:
